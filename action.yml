@@ -1,0 +1,104 @@
+name: "DxCore Agent"
+description: "Download the DxCore CLI and connect an agent to the coordinator"
+
+inputs:
+  coordinator-url:
+    description: "URL of the running DxCore coordinator"
+    required: true
+  token:
+    description: "Authentication token matching the coordinator"
+    required: true
+  agent-id:
+    description: "Unique identifier for this agent. Defaults to matrix value or runner name."
+    required: false
+    default: ""
+  session-id:
+    description: "Session identifier. Defaults to gha-<run_id>."
+    required: false
+    default: ""
+  work-dir:
+    description: "Working directory for task execution"
+    required: false
+    default: "."
+  build-system:
+    description: "Build system adapter (turbo or nx)"
+    required: false
+    default: "turbo"
+  version:
+    description: "Release tag to download (e.g. v0.1.0). Defaults to latest."
+    required: false
+    default: "latest"
+
+branding:
+  icon: "cpu"
+  color: "green"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Determine version
+      id: version
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          TAG=$(gh release view --repo join-with/dxcore --json tagName -q '.tagName') || { echo "::error::No releases found in join-with/dxcore"; exit 1; }
+        else
+          TAG="${{ inputs.version }}"
+        fi
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Download CLI binary
+      shell: bash
+      run: |
+        gh release download "${{ steps.version.outputs.tag }}" \
+          --repo join-with/dxcore \
+          --pattern "dxcore-agents-cli-linux-x86_64" \
+          --output dxcore-cli
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Make binary executable
+      shell: bash
+      run: chmod +x dxcore-cli
+
+    - name: Resolve defaults
+      id: defaults
+      shell: bash
+      run: |
+        # Session ID: use input or fall back to gha-<run_id>
+        SESSION_ID="${{ inputs.session-id }}"
+        if [ -z "$SESSION_ID" ]; then
+          SESSION_ID="gha-${{ github.run_id }}"
+        fi
+        echo "session_id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+
+        # Agent ID: use input, or matrix value, or runner name
+        AGENT_ID="${{ inputs.agent-id }}"
+        if [ -z "$AGENT_ID" ]; then
+          MATRIX_JSON='${{ toJSON(matrix) }}'
+          if [ "$MATRIX_JSON" != "null" ] && [ -n "$MATRIX_JSON" ]; then
+            # Use a deterministic hash of the matrix to build a unique agent id
+            MATRIX_KEY=$(echo "$MATRIX_JSON" | md5sum | head -c 8)
+            AGENT_ID="agent-${MATRIX_KEY}"
+          else
+            AGENT_ID="${{ runner.name }}"
+          fi
+        fi
+        echo "agent_id=$AGENT_ID" >> "$GITHUB_OUTPUT"
+
+    - name: Wait for coordinator
+      shell: bash
+      run: ./dxcore-cli ci wait --coordinator="${{ inputs.coordinator-url }}"
+
+    - name: Start agent
+      shell: bash
+      run: |
+        ./dxcore-cli agent \
+          --coordinator="${{ inputs.coordinator-url }}" \
+          --agent-id=${{ steps.defaults.outputs.agent_id }} \
+          --session-id=${{ steps.defaults.outputs.session_id }} \
+          --token=${{ inputs.token }} \
+          --work-dir=${{ inputs.work-dir }} \
+          --build-system=${{ inputs.build-system }}
