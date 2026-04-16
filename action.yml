@@ -28,6 +28,10 @@ inputs:
     description: "Release tag to download (e.g. v0.1.0). Defaults to latest."
     required: false
     default: "latest"
+  tags:
+    description: "Agent capability tags (comma-separated key=value pairs, e.g. zig=true,docker=true)"
+    required: false
+    default: ""
 
 branding:
   icon: "cpu"
@@ -94,6 +98,8 @@ runs:
 
     - name: Start agent
       shell: bash
+      env:
+        AGENT_TAGS: ${{ inputs.tags }}
       run: |
         ./dxcore-cli agent \
           --coordinator="${{ inputs.coordinator-url }}" \
@@ -101,4 +107,5 @@ runs:
           --session-id=${{ steps.defaults.outputs.session_id }} \
           --token=${{ inputs.token }} \
           --work-dir=${{ inputs.work-dir }} \
-          --build-system=${{ inputs.build-system }}
+          --build-system=${{ inputs.build-system }} \
+          --tags="$AGENT_TAGS"
