@@ -53,19 +53,26 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
 
+    # The CLI lives in the runner's temp directory, never in the checkout the
+    # agent serves: a file left in the workspace is an input of that repo's
+    # own tasks, so it would change their hashes with every CLI release.
     - name: Download CLI binary
+      id: cli
       shell: bash
       run: |
+        : "${RUNNER_TEMP:?RUNNER_TEMP is not set}"
+        CLI_DIR="$RUNNER_TEMP/dxcore-cli"
+        mkdir -p "$CLI_DIR"
         gh release download "${{ steps.version.outputs.tag }}" \
           --repo join-with/dxcore \
           --pattern "dxcore_agents_cli_linux_x86_64" \
-          --output dxcore-cli
+          --output "$CLI_DIR/dxcore-cli" \
+          --clobber
+        chmod +x "$CLI_DIR/dxcore-cli"
+        echo "DxCore CLI: $CLI_DIR/dxcore-cli"
+        echo "path=$CLI_DIR/dxcore-cli" >> "$GITHUB_OUTPUT"
       env:
         GH_TOKEN: ${{ github.token }}
-
-    - name: Make binary executable
-      shell: bash
-      run: chmod +x dxcore-cli
 
     - name: Resolve defaults
       id: defaults
@@ -94,14 +101,18 @@ runs:
 
     - name: Wait for coordinator
       shell: bash
-      run: ./dxcore-cli ci wait --coordinator="${{ inputs.coordinator-url }}"
+      env:
+        DXCORE_CLI: ${{ steps.cli.outputs.path }}
+      run: |
+        "$DXCORE_CLI" ci wait --coordinator="${{ inputs.coordinator-url }}"
 
     - name: Start agent
       shell: bash
       env:
         AGENT_TAGS: ${{ inputs.tags }}
+        DXCORE_CLI: ${{ steps.cli.outputs.path }}
       run: |
-        ./dxcore-cli agent \
+        "$DXCORE_CLI" agent \
           --coordinator="${{ inputs.coordinator-url }}" \
           --agent-id=${{ steps.defaults.outputs.agent_id }} \
           --session-id=${{ steps.defaults.outputs.session_id }} \
